@@ -138,6 +138,11 @@ def gemini_vlm_options(model: str, prompt: str, timeout: int = 300):
 
 def process_single_pdf(pdf_path: Path, output_dir: Path, model_name: str = "gemini-2.5-pro-preview-05-06"):
     """处理单个PDF文件"""
+
+    pdf_path = Path(pdf_path)  
+    output_dir = Path(output_dir)  
+
+
     logging.info(f"正在处理: {pdf_path.name}")
 
     # 配置VLM流水线
@@ -182,11 +187,36 @@ def process_single_pdf(pdf_path: Path, output_dir: Path, model_name: str = "gemi
 
 def main():
     """主函数"""
+
+        # 设置日志
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+    # 检查环境变量
+    if not os.getenv("GEMINI_API_KEY"):
+        logging.error("未设置 GEMINI_API_KEY 环境变量")
+        logging.error("请设置你的 Gemini API 密钥: export GEMINI_API_KEY='your-api-key'")
+        return
+
+    # 初始化 liteLLM
+    os.environ["LITELLM_LOG"] = "ERROR"  # 减少日志输出
+
+    # 启动本地 API 服务器
+    logging.info("=== 启动本地 API 服务器 ===")
+    try:
+        api_server.start()
+        logging.info("API 服务器启动成功")
+    except Exception as e:
+        logging.error(f"无法启动 API 服务器: {e}")
+        return   
+
+    
     # 设置输入文件
-    input_file = "./test/km-test.pdf"  # 修改为你的PDF文件夹路径
+    input_file = "./test2/mixedText.pdf"  # 修改为你的PDF文件夹路径
 
     # 设置输出文件夹
     output_folder = "./output"  # 结果保存位置
+
+    
 
     # 设置模型名称
     model_name = "gemini-2.5-pro-preview-05-06"  # 使用 Gemini 2.5 Pro Preview
