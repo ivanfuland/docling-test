@@ -7,12 +7,15 @@
 ```
 docling-test/
 ├── output/             # 输出文件目录
+│   ├── images/         # 处理后的图片输出目录
+│   └── results/        # 处理后的文档结果目录
 ├── test/               # 测试文档目录
 │   ├── docling.pdf     # 测试文档
 │   └── km-test.pdf     # 测试文档
 ├── .env                # 环境变量配置（不包含在版本控制中）
 ├── .env.example        # 环境变量示例
 ├── main_custom.py      # 自定义文档处理示例
+├── main_custom_oss_serializer.py  # 自定义OSS图片上传和文档序列化示例
 ├── main_exrpot.py      # 文档导出示例
 ├── main_llm_ocr_simgle.py  # 使用 LLM 进行单文件 OCR 处理
 ├── main_lm_ocr_dir.py  # 使用 LLM 进行目录 OCR 处理
@@ -77,8 +80,22 @@ python main_llm_ocr_simgle.py
 python main_lm_ocr_dir.py
 ```
 
+### 使用自定义OSS图片上传处理文档
+
+```bash
+python main_custom_oss_serializer.py
+```
+
+该脚本将PDF文档转换为Markdown格式，并上传文档中的图片到阿里云OSS。处理过程包括：
+
+1. 文档转换：将PDF转换为结构化文档
+2. 图像处理：对文档中的图像进行提取并上传到OSS
+3. 文档序列化：将处理后的文档序列化为Markdown
+4. 结果保存：保存生成的Markdown文件到指定位置
+
 ## 注意事项
 
 - 使用 OCR 功能需要安装 Tesseract
 - 使用 LLM 功能需要配置相应的 API 密钥
+- 使用 OSS 上传功能需要配置阿里云 OSS 访问凭证
 - 请确保 `test` 和 `output` 目录存在 

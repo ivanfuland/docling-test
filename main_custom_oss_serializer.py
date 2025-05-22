@@ -36,8 +36,9 @@ from docling_core.types.doc import PictureItem
 
 class ConfigManager:
     """配置管理类，用于管理文档处理的基本配置"""
-    def __init__(self, doc_source="./test3/2025-05-20.pdf", doc_alignment="Left", doc_width="700"):
+    def __init__(self, doc_source, doc_dst, doc_alignment="Left", doc_width="700"):
         self.doc_source = doc_source
+        self.doc_dst = doc_dst
         self.doc_alignment = doc_alignment
         self.doc_width = doc_width
 
@@ -295,9 +296,10 @@ class DocumentProcessor:
         
         return serializer.serialize()
     
-    def save_markdown(self, ser_result, output_path="./output/custom_serializer.md"):
+    def save_markdown(self, ser_result):
         """保存序列化结果到Markdown文件"""
         # 确保输出目录存在
+        output_path = self.config.doc_dst
         output_dir = Path(output_path).parent
         output_dir.mkdir(parents=True, exist_ok=True)
         
@@ -326,7 +328,9 @@ class DocumentProcessor:
 def main():
     """主函数，执行整个文档处理流程"""
     # 创建配置管理器
-    config = ConfigManager()
+    doc_source = "./test3/2025-05-20.pdf"
+    doc_dst = "./output/results/processed_document.md"
+    config = ConfigManager(doc_source, doc_dst)
     
     # 创建文档处理器
     processor = DocumentProcessor(config)
