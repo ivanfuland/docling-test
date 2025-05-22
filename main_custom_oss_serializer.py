@@ -1,3 +1,16 @@
+import os
+import io
+import re
+import logging
+import oss2
+from typing import List, Any, Optional
+from pathlib import Path
+from dotenv import load_dotenv
+from rich.console import Console
+from rich.panel import Panel
+from huggingface_hub import snapshot_download
+from typing_extensions import override
+
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import (
     PdfPipelineOptions,
@@ -6,201 +19,11 @@ from docling.datamodel.pipeline_options import (
     PictureDescriptionApiOptions,
 )
 from docling.document_converter import DocumentConverter, PdfFormatOption
-
-
-# DOC_SOURCE = "https://arxiv.org/pdf/2311.18481"
-DOC_SOURCE = "./test3/2025-05-20.pdf"
-DOC_ALIGNMENT = "Left"
-DOC_WIDTH = "700"
-
-
-from rich.console import Console
-from rich.panel import Panel
-
-console = Console(width=210)  # for preventing Markdown table wrapped rendering
-
-def print_in_console(text):
-    console.print(Panel(text))
-
-
-# 设置 ollama 服务器
-def vllm_local_options(model: str):
-    options = PictureDescriptionApiOptions(
-        url="http://localhost:11434/v1/chat/completions",
-        params=dict(
-            model=model,
-            seed=42,
-            max_completion_tokens=200,
-        ),
-        prompt="Describe the image in three sentences. Be consise and accurate.",
-        timeout=90,
-    )
-    return options
-
-# 中文检测和识别，使用 RapidOCR 模型
-import os
-from huggingface_hub import snapshot_download
-from typing import List
-
-download_path = snapshot_download(repo_id="SWHL/RapidOCR")
-det_model_path = os.path.join(download_path, "PP-OCRv4", "ch_PP-OCRv4_det_infer.onnx")      # 检测模型
-rec_model_path = os.path.join(download_path, "PP-OCRv4", "ch_PP-OCRv4_rec_server_infer.onnx") # 中文识别
-cls_model_path = os.path.join(download_path, "PP-OCRv3", "ch_ppocr_mobile_v2.0_cls_train.onnx") # 方向分类
-
-lang: List[str] = ['english', 'chinese']
-
-ocr_options = RapidOcrOptions(
-    det_model_path=det_model_path,
-    rec_model_path=rec_model_path,
-    cls_model_path=cls_model_path,
-    lang=lang,
-)
-
-# 设置 pipeline 选项，包括两个部分：
-# 1. 图片描述
-# 2. 图片生成
-pipeline_options = PdfPipelineOptions(
-    do_picture_description=True,
-    picture_description_options=vllm_local_options("qwen2.5vl:latest"),
-    enable_remote_services=True,
-    images_scale=2,
-    generate_page_images = True,
-    generate_picture_images = True,
-    ocr_options=ocr_options,
-    do_picture_classification = True,
-    # do_code_enrichment = True,
-    # do_ocr = True,
-    # do_table_structure = True,
-    # accelerator_options = AcceleratorOptions(
-    #     num_threads=4, device=AcceleratorDevice.AUTO
-    # ),
-)
-
-# 创建 DocumentConverter 对象，完成 pdf 文件的转换
-converter = DocumentConverter(
-    format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)}
-)
-doc = converter.convert(source=DOC_SOURCE).document
-
-
-########################################################
-# 处理图片
-########################################################
-
-from pydantic import AnyUrl, BaseModel
-from pathlib import Path
-from docling_core.types.doc import PictureItem
-import io
-import oss2
-import logging
-from dotenv import load_dotenv
-
-# 加载.env文件中的环境变量
-load_dotenv()
-
-# 从环境变量中获取OSS配置
-endpoint = os.getenv('OSS_ENDPOINT')
-access_key_id = os.getenv('OSS_ACCESS_KEY_ID')
-access_key_secret = os.getenv('OSS_ACCESS_KEY_SECRET')
-bucket_name = os.getenv('OSS_BUCKET_NAME')
-
-
-auth = oss2.Auth(access_key_id, access_key_secret)
-bucket = oss2.Bucket(auth, endpoint, bucket_name)
-
-# 配置日志
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-# 获取OSS Bucket绑定的自定义域名
-def get_custom_domain():
-    try:
-        # 获取Bucket绑定的所有CNAME记录
-        list_result = bucket.list_bucket_cname()
-        custom_domains = []
-        
-        # 遍历所有CNAME记录查找状态正常的域名
-        for cname in list_result.cname:
-            if cname.status == 'Enabled':
-                custom_domains.append(cname.domain)
-                logging.info(f"发现绑定的自定义域名: {cname.domain}")
-        
-        # 如果有绑定的域名，返回第一个
-        if custom_domains:
-            return custom_domains[0]
-        else:
-            logging.warning("未找到绑定的自定义域名，将使用默认OSS域名")
-            return None
-    except Exception as e:
-        logging.error(f"获取自定义域名时出错: {str(e)}")
-        return None
-
-# 获取绑定的自定义域名
-custom_domain = get_custom_domain()
-
-img_count = 0
-for item, level in doc.iterate_items(with_groups=False):
-    if isinstance(item, PictureItem):
-        
-        # 拿到识别的图片Data
-        img = item.image.pil_image
-
-        # 生成图片的hash值, 用于生成图片的唯一标识
-        hexhash = item._image_to_hexhash()
-        if hexhash is not None:
-            file_name = f"image_{img_count:06}_{hexhash}.png"
-            
-            # 将图片转换为字节流
-            img_byte_arr = io.BytesIO()
-            img.save(img_byte_arr, format='PNG')
-            img_byte_arr = img_byte_arr.getvalue()
-            
-            # 上传到OSS
-            oss_path = f"docling/{file_name}"
-            try:
-                result = bucket.put_object(oss_path, img_byte_arr)
-                if result.status == 200:
-                    # 根据是否有自定义域名构建OSS URL
-                    if custom_domain:
-                        # 使用自定义域名构建URL
-                        oss_url = f"https://{custom_domain}/{oss_path}"
-                    else:
-                        # 使用默认OSS域名构建URL
-                        oss_url = f"https://{bucket.bucket_name}.{endpoint}/{oss_path}"
-                    
-                    # 设置图片路径为OSS URL
-                    item.image.uri = oss_url
-                    logging.info(f"上传图片成功: {oss_url}")
-                else:
-                    logging.error(f"上传图片失败，状态码: {result.status}")
-                    # 上传失败时可以选择保存到本地
-                    loc_path = Path("./output/images") / file_name
-                    img.save(loc_path)
-                    obj_path = Path("./images") / file_name
-                    item.image.uri = Path(obj_path)
-            except Exception as e:
-                logging.error(f"上传图片异常: {str(e)}")
-                # 发生异常时保存到本地
-                loc_path = Path("./output/images") / file_name
-                img.save(loc_path)
-                obj_path = Path("./images") / file_name
-                item.image.uri = Path(obj_path)
-    img_count += 1
-
-
-from docling_core.transforms.serializer.markdown import MarkdownDocSerializer
+from docling_core.transforms.serializer.markdown import MarkdownDocSerializer, MarkdownParams
 from docling_core.transforms.chunker.hierarchical_chunker import TripletTableSerializer
-from docling_core.transforms.serializer.markdown import MarkdownParams
-from typing import Any, Optional
-
-from docling_core.transforms.serializer.base import (
-    BaseDocSerializer,
-    SerializationResult,
-)
+from docling_core.transforms.serializer.base import BaseDocSerializer, SerializationResult
 from docling_core.transforms.serializer.common import create_ser_result
-from docling_core.transforms.serializer.markdown import (
-    MarkdownParams,
-    MarkdownPictureSerializer,
-)
+from docling_core.transforms.serializer.markdown import MarkdownPictureSerializer
 from docling_core.types.doc.document import (
     DoclingDocument,
     ImageRefMode,
@@ -208,14 +31,163 @@ from docling_core.types.doc.document import (
     PictureClassificationData,
     PictureItem,
 )
-from typing_extensions import override
+from docling_core.types.doc import PictureItem
 
-import re 
-from typing import Any, Optional # 确保导入 Optional
 
+class ConfigManager:
+    """配置管理类，用于管理文档处理的基本配置"""
+    def __init__(self, doc_source="./test3/2025-05-20.pdf", doc_alignment="Left", doc_width="700"):
+        self.doc_source = doc_source
+        self.doc_alignment = doc_alignment
+        self.doc_width = doc_width
+
+
+class ConsolePrinter:
+    """控制台输出类，用于格式化输出信息"""
+    def __init__(self, width=210):
+        self.console = Console(width=width)  # 防止 Markdown 表格换行渲染
+        
+    def print_panel(self, text):
+        """在面板中打印文本"""
+        self.console.print(Panel(text))
+
+
+class VlmConfiguration:
+    """VLM配置类，处理视觉语言模型的配置"""
+    @staticmethod
+    def get_local_options(model):
+        """获取本地VLM模型的配置选项"""
+        return PictureDescriptionApiOptions(
+            url="http://localhost:11434/v1/chat/completions",
+            params=dict(
+                model=model,
+                seed=42,
+                max_completion_tokens=200,
+            ),
+            prompt="Describe the image in three sentences. Be consise and accurate.",
+            timeout=90,
+        )
+
+
+class OcrConfiguration:
+    """OCR配置类，负责光学字符识别的配置"""
+    @staticmethod
+    def get_rapid_ocr_options():
+        """获取RapidOCR模型的配置选项"""
+        download_path = snapshot_download(repo_id="SWHL/RapidOCR")
+        det_model_path = os.path.join(download_path, "PP-OCRv4", "ch_PP-OCRv4_det_infer.onnx")      # 检测模型
+        rec_model_path = os.path.join(download_path, "PP-OCRv4", "ch_PP-OCRv4_rec_server_infer.onnx") # 中文识别
+        cls_model_path = os.path.join(download_path, "PP-OCRv3", "ch_ppocr_mobile_v2.0_cls_train.onnx") # 方向分类
+
+        lang: List[str] = ['english', 'chinese']
+
+        return RapidOcrOptions(
+            det_model_path=det_model_path,
+            rec_model_path=rec_model_path,
+            cls_model_path=cls_model_path,
+            lang=lang,
+        )
+
+
+class OssImageUploader:
+    """OSS图片上传类，处理图片上传到阿里云OSS的逻辑"""
+    def __init__(self):
+        # 配置日志
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+        self.logger = logging.getLogger(__name__)
+        
+        # 加载.env文件中的环境变量
+        load_dotenv()
+        
+        # 从环境变量中获取OSS配置
+        self.endpoint = os.getenv('OSS_ENDPOINT')
+        self.access_key_id = os.getenv('OSS_ACCESS_KEY_ID')
+        self.access_key_secret = os.getenv('OSS_ACCESS_KEY_SECRET')
+        self.bucket_name = os.getenv('OSS_BUCKET_NAME')
+        
+        # 初始化OSS客户端
+        self.auth = oss2.Auth(self.access_key_id, self.access_key_secret)
+        self.bucket = oss2.Bucket(self.auth, self.endpoint, self.bucket_name)
+        
+        # 获取自定义域名
+        self.custom_domain = self._get_custom_domain()
+    
+    def _get_custom_domain(self):
+        """获取OSS Bucket绑定的自定义域名"""
+        try:
+            # 获取Bucket绑定的所有CNAME记录
+            list_result = self.bucket.list_bucket_cname()
+            custom_domains = []
+            
+            # 遍历所有CNAME记录查找状态正常的域名
+            for cname in list_result.cname:
+                if cname.status == 'Enabled':
+                    custom_domains.append(cname.domain)
+                    self.logger.info(f"发现绑定的自定义域名: {cname.domain}")
+            
+            # 如果有绑定的域名，返回第一个
+            if custom_domains:
+                return custom_domains[0]
+            else:
+                self.logger.warning("未找到绑定的自定义域名，将使用默认OSS域名")
+                return None
+        except Exception as e:
+            self.logger.error(f"获取自定义域名时出错: {str(e)}")
+            return None
+    
+    def upload_image(self, image, image_hash, img_count):
+        """上传图片到OSS，返回URL或本地路径"""
+        file_name = f"image_{img_count:06}_{image_hash}.png"
+        
+        # 将图片转换为字节流
+        img_byte_arr = io.BytesIO()
+        image.save(img_byte_arr, format='PNG')
+        img_byte_arr = img_byte_arr.getvalue()
+        
+        # 上传到OSS
+        oss_path = f"docling/{file_name}"
+        try:
+            result = self.bucket.put_object(oss_path, img_byte_arr)
+            if result.status == 200:
+                # 根据是否有自定义域名构建OSS URL
+                if self.custom_domain:
+                    # 使用自定义域名构建URL
+                    oss_url = f"https://{self.custom_domain}/{oss_path}"
+                else:
+                    # 使用默认OSS域名构建URL
+                    oss_url = f"https://{self.bucket.bucket_name}.{self.endpoint}/{oss_path}"
+                
+                self.logger.info(f"上传图片成功: {oss_url}")
+                return oss_url
+            else:
+                self.logger.error(f"上传图片失败，状态码: {result.status}")
+                # 上传失败时保存到本地
+                local_path = self._save_locally(image, file_name)
+                return local_path
+        except Exception as e:
+            self.logger.error(f"上传图片异常: {str(e)}")
+            # 发生异常时保存到本地
+            local_path = self._save_locally(image, file_name)
+            return local_path
+    
+    def _save_locally(self, image, file_name):
+        """将图片保存到本地，返回路径"""
+        # 确保输出目录存在
+        output_dir = Path("./output/images")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        loc_path = output_dir / file_name
+        image.save(loc_path)
+        return Path("./images") / file_name
 
 
 class AnnotationPictureSerializer(MarkdownPictureSerializer):
+    """自定义图片序列化器，添加图片自定义属性和描述"""
+    def __init__(self, doc_alignment, doc_width):
+        super().__init__()
+        self.doc_alignment = doc_alignment
+        self.doc_width = doc_width
+        
     @override
     def serialize(
         self,
@@ -223,7 +195,7 @@ class AnnotationPictureSerializer(MarkdownPictureSerializer):
         item: PictureItem,
         doc_serializer: BaseDocSerializer,
         doc: DoclingDocument,
-        separator: Optional[str] = None, # 您代码中已有的参数
+        separator: Optional[str] = None,
         **kwargs: Any,
     ) -> SerializationResult:
         text_parts: list[str] = []
@@ -233,58 +205,140 @@ class AnnotationPictureSerializer(MarkdownPictureSerializer):
             item=item,
             doc_serializer=doc_serializer,
             doc=doc,
-            **kwargs, # 根据您的代码保留
+            **kwargs,
         )
         original_markdown_tag = parent_res.text
-        modified_markdown_tag = original_markdown_tag # 默认为原始标签
+        modified_markdown_tag = original_markdown_tag
 
         # 2. 解析原始标签并替换为自定义格式
-        #    正则表达式 r"!\[(.*?)\]\((.*?)\)" 用于匹配 ![alt_text](url)
-        #    - 第一个捕获组 (.*?) 是 alt_text
-        #    - 第二个捕获组 (.*?) 是 url
         match = re.fullmatch(r"!\[(.*?)\]\((.*?)\)", original_markdown_tag)
         
         if match:
-            # original_alt_text = match.group(1) # 原始的 alt 文本 (例如 "Image")
-            url = match.group(2)              # 图片的 URL
-
-            # 定义您想要的自定义属性
-
-            
-            # 构建新的 alt 文本部分，格式为 "Image|Alignment|Width"
-            # 注意：这里我们固定使用 "Image" 作为前缀，符合您的目标格式
-            new_alt_text_with_attrs = f"Image|{DOC_ALIGNMENT}|{DOC_WIDTH}"
-            
-            # 构建新的、包含自定义属性的 Markdown 图片标签
+            url = match.group(2)
+            new_alt_text_with_attrs = f"Image|{self.doc_alignment}|{self.doc_width}"
             modified_markdown_tag = f"![{new_alt_text_with_attrs}]({url})"
         
         text_parts.append(modified_markdown_tag)
 
-        # 3. 追加其他注解 (您现有的逻辑)
-        for annotation in item.annotations: # type: ignore
+        # 3. 追加其他注解
+        for annotation in item.annotations:
             if isinstance(annotation, PictureDescriptionData):
-                # text_parts.append(f"")
-                text_parts.append(f"> Picture Description: {annotation.text}") # type: ignore
+                text_parts.append(f"> Picture Description: {annotation.text}")
 
         # 4. 使用分隔符连接所有部分
         text_res = (separator or "\n").join(text_parts)
         
         # 5. 创建并返回序列化结果
         return create_ser_result(text=text_res, span_source=item)
-    
-serializer = MarkdownDocSerializer(
-    doc=doc,
-    table_serializer=TripletTableSerializer(),
-    picture_serializer=AnnotationPictureSerializer(),
-    params=MarkdownParams(
-        image_mode=ImageRefMode.REFERENCED,
-        image_placeholder="",
-    ),
-)
 
-# 获取序列化结果，并保存到本地Markdown文件  
-ser_result = serializer.serialize()
-output_path = "./output/custom_serializer.md"  # 修改为你希望保存的路径  
-with open(output_path, "w", encoding="utf-8") as f:  
-    f.write(ser_result.text)  
+
+class DocumentProcessor:
+    """文档处理类，负责整个文档处理流程"""
+    def __init__(self, config_manager):
+        self.config = config_manager
+        self.oss_uploader = OssImageUploader()
+    
+    def setup_pipeline_options(self):
+        """设置文档处理管道选项"""
+        return PdfPipelineOptions(
+            do_picture_description=True,
+            picture_description_options=VlmConfiguration.get_local_options("qwen2.5vl:latest"),
+            enable_remote_services=True,
+            images_scale=2,
+            generate_page_images=True,
+            generate_picture_images=True,
+            ocr_options=OcrConfiguration.get_rapid_ocr_options(),
+            do_picture_classification=True,
+        )
+    
+    def convert_document(self):
+        """转换文档为内部表示"""
+        pipeline_options = self.setup_pipeline_options()
+        
+        converter = DocumentConverter(
+            format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)}
+        )
+        
+        return converter.convert(source=self.config.doc_source).document
+    
+    def process_images(self, doc):
+        """处理文档中的图片，上传到OSS或保存到本地"""
+        img_count = 0
+        for item, level in doc.iterate_items(with_groups=False):
+            if isinstance(item, PictureItem):
+                # 拿到识别的图片Data
+                img = item.image.pil_image
+
+                # 生成图片的hash值
+                hexhash = item._image_to_hexhash()
+                if hexhash is not None:
+                    uri = self.oss_uploader.upload_image(img, hexhash, img_count)
+                    item.image.uri = uri
+            img_count += 1
+        
+        return doc
+    
+    def serialize_document(self, doc):
+        """序列化文档为Markdown格式"""
+        serializer = MarkdownDocSerializer(
+            doc=doc,
+            table_serializer=TripletTableSerializer(),
+            picture_serializer=AnnotationPictureSerializer(
+                self.config.doc_alignment, 
+                self.config.doc_width
+            ),
+            params=MarkdownParams(
+                image_mode=ImageRefMode.REFERENCED,
+                image_placeholder="",
+            ),
+        )
+        
+        return serializer.serialize()
+    
+    def save_markdown(self, ser_result, output_path="./output/custom_serializer.md"):
+        """保存序列化结果到Markdown文件"""
+        # 确保输出目录存在
+        output_dir = Path(output_path).parent
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(ser_result.text)
+        
+        return output_path
+    
+    def process(self):
+        """执行完整的文档处理流程"""
+        # 1. 转换文档
+        doc = self.convert_document()
+        
+        # 2. 处理图片
+        doc = self.process_images(doc)
+        
+        # 3. 序列化文档
+        ser_result = self.serialize_document(doc)
+        
+        # 4. 保存Markdown
+        output_path = self.save_markdown(ser_result)
+        
+        return output_path
+
+
+def main():
+    """主函数，执行整个文档处理流程"""
+    # 创建配置管理器
+    config = ConfigManager()
+    
+    # 创建文档处理器
+    processor = DocumentProcessor(config)
+    
+    # 处理文档
+    output_path = processor.process()
+    
+    # 打印结果
+    printer = ConsolePrinter()
+    printer.print_panel(f"文档处理完成，输出文件：{output_path}")
+
+
+if __name__ == "__main__":
+    main()
 
