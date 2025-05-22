@@ -36,12 +36,12 @@ from docling_core.types.doc import PictureItem
 
 class ConfigManager:
     """配置管理类，用于管理文档处理的基本配置"""
-    def __init__(self, doc_source, doc_dst, doc_alignment="Left", doc_width="700"):
+    def __init__(self, doc_source, doc_dst, doc_alignment, doc_width, show_description):
         self.doc_source = doc_source
         self.doc_dst = doc_dst
         self.doc_alignment = doc_alignment
         self.doc_width = doc_width
-
+        self.show_description = show_description    
 
 class ConsolePrinter:
     """控制台输出类，用于格式化输出信息"""
@@ -184,11 +184,12 @@ class OssImageUploader:
 
 class AnnotationPictureSerializer(MarkdownPictureSerializer):
     """自定义图片序列化器，添加图片自定义属性和描述"""
-    def __init__(self, doc_alignment, doc_width):
+    def __init__(self, doc_alignment, doc_width, show_description):
         super().__init__()
         self.doc_alignment = doc_alignment
         self.doc_width = doc_width
-        
+        self.show_description = show_description
+
     @override
     def serialize(
         self,
@@ -222,9 +223,10 @@ class AnnotationPictureSerializer(MarkdownPictureSerializer):
         text_parts.append(modified_markdown_tag)
 
         # 3. 追加其他注解
-        for annotation in item.annotations:
-            if isinstance(annotation, PictureDescriptionData):
-                text_parts.append(f"> Picture Description: {annotation.text}")
+        if self.show_description:
+            for annotation in item.annotations:
+                if isinstance(annotation, PictureDescriptionData):
+                    text_parts.append(f"> Picture Description: {annotation.text}")
 
         # 4. 使用分隔符连接所有部分
         text_res = (separator or "\n").join(text_parts)
@@ -242,14 +244,19 @@ class DocumentProcessor:
     def setup_pipeline_options(self):
         """设置文档处理管道选项"""
         return PdfPipelineOptions(
+            # 图片描述相关配置
             do_picture_description=True,
             picture_description_options=VlmConfiguration.get_local_options("qwen2.5vl:latest"),
             enable_remote_services=True,
+
+            # 图片生成相关配置
             images_scale=2,
             generate_page_images=True,
             generate_picture_images=True,
+
+            # OCR相关配置
             ocr_options=OcrConfiguration.get_rapid_ocr_options(),
-            do_picture_classification=True,
+            #do_picture_classification=True,
         )
     
     def convert_document(self):
@@ -286,7 +293,8 @@ class DocumentProcessor:
             table_serializer=TripletTableSerializer(),
             picture_serializer=AnnotationPictureSerializer(
                 self.config.doc_alignment, 
-                self.config.doc_width
+                self.config.doc_width,
+                self.config.show_description
             ),
             params=MarkdownParams(
                 image_mode=ImageRefMode.REFERENCED,
@@ -327,10 +335,15 @@ class DocumentProcessor:
 
 def main():
     """主函数，执行整个文档处理流程"""
-    # 创建配置管理器
+
+    # 创建配置管理器    
     doc_source = "./test3/2025-05-20.pdf"
-    doc_dst = "./output/results/processed_document.md"
-    config = ConfigManager(doc_source, doc_dst)
+    doc_dst = "./output/results/2025-05-20.md"
+    doc_alignment="Left"
+    doc_width="700"
+    show_description = False
+
+    config = ConfigManager(doc_source, doc_dst, doc_alignment, doc_width, show_description)
     
     # 创建文档处理器
     processor = DocumentProcessor(config)
