@@ -9,7 +9,7 @@ from docling.document_converter import DocumentConverter, PdfFormatOption
 
 
 # DOC_SOURCE = "https://arxiv.org/pdf/2311.18481"
-DOC_SOURCE = "./test3/2025-05-22.pdf"
+DOC_SOURCE = "./test3/2025-05-20.pdf"
 
 
 from rich.console import Console
@@ -65,6 +65,7 @@ pipeline_options = PdfPipelineOptions(
     generate_page_images = True,
     generate_picture_images = True,
     ocr_options=ocr_options,
+    do_picture_classification = True,
     # do_code_enrichment = True,
     # do_ocr = True,
     # do_table_structure = True,
@@ -128,6 +129,7 @@ from docling_core.types.doc.document import (
     DoclingDocument,
     ImageRefMode,
     PictureDescriptionData,
+    PictureClassificationData,
     PictureItem,
 )
 from typing_extensions import override
@@ -165,6 +167,26 @@ class AnnotationPictureSerializer(MarkdownPictureSerializer):
             if isinstance(annotation, PictureDescriptionData):
                 # text_parts.append(f"<!-- Picture description: {annotation.text} -->")
                 text_parts.append(f"> Picture Description: {annotation.text}")
+            elif isinstance(annotation, PictureClassificationData):
+                # predicted_class = None
+                # if annotation.predicted_classes: #
+                #     # 获取预测的第一个类别名称
+                #     predicted_class = annotation.predicted_classes[0].class_name #
+
+                # if predicted_class is not None:
+                #     # 将图片类型信息添加到序列化文本中
+                #     text_parts.append(f"> Picture Type: {predicted_class}") #
+                       # 修改此部分以输出所有分类
+                if annotation.predicted_classes:  # 检查是否存在预测类别列表
+                    all_class_names = []
+                    for predicted_class_obj in annotation.predicted_classes:
+                        if predicted_class_obj.class_name: # 确保 class_name 存在且不为空
+                            all_class_names.append(predicted_class_obj.class_name)
+                    
+                    if all_class_names: # 如果收集到了任何类别名称
+                        # 将所有类别名称用逗号和空格连接起来
+                        formatted_classes = ", ".join(all_class_names)
+                        text_parts.append(f"Picture Types: {formatted_classes}")
 
         text_res = (separator or "\n").join(text_parts)
         return create_ser_result(text=text_res, span_source=item)

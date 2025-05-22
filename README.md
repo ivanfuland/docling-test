@@ -40,6 +40,23 @@ cp .env.example .env
 
 从 [Tesseract GitHub](https://github.com/UB-Mannheim/tesseract/wiki) 下载并安装。
 
+## 环境变量配置
+
+本项目使用环境变量来存储敏感配置信息，如OSS访问凭证。请按照以下步骤设置环境变量：
+
+1. 在项目根目录创建一个名为`.env`的文件
+2. 在`.env`文件中添加以下配置（替换为你自己的值）：
+
+```
+# OSS配置
+OSS_ENDPOINT=oss-cn-beijing.aliyuncs.com
+OSS_ACCESS_KEY_ID=your_access_key_id_here
+OSS_ACCESS_KEY_SECRET=your_access_key_secret_here
+OSS_BUCKET_NAME=your_bucket_name_here
+```
+
+注意：`.env`文件包含敏感信息，请不要将其提交到版本控制系统中。
+
 ## 使用方法
 
 ### 基本 OCR 处理
