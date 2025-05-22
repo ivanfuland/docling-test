@@ -15,8 +15,9 @@ IMAGE_RESOLUTION_SCALE = 2.0
 def main():
     logging.basicConfig(level=logging.INFO)
 
-    input_doc_path = Path("./test/docling.pdf")
+    input_doc_path = Path("./test2/mixedText.pdf")
     output_dir = Path("scratch")
+    image_dir = Path("scratch/image")
 
     # Important: For operating with page images, we must keep them, otherwise the DocumentConverter
     # will destroy them for cleaning up memory.
@@ -40,46 +41,15 @@ def main():
     conv_res = doc_converter.convert(input_doc_path)
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    image_dir.mkdir(parents=True, exist_ok=True)  
+    
     doc_filename = conv_res.input.file.stem
-
-    # Save page images
-    for page_no, page in conv_res.document.pages.items():
-        page_no = page.page_no
-        page_image_filename = output_dir / f"{doc_filename}-{page_no}.png"
-        with page_image_filename.open("wb") as fp:
-            page.image.pil_image.save(fp, format="PNG")
-
-    # Save images of figures and tables
-    table_counter = 0
-    picture_counter = 0
-    for element, _level in conv_res.document.iterate_items():
-        if isinstance(element, TableItem):
-            table_counter += 1
-            element_image_filename = (
-                output_dir / f"{doc_filename}-table-{table_counter}.png"
-            )
-            with element_image_filename.open("wb") as fp:
-                element.get_image(conv_res.document).save(fp, "PNG")
-
-        if isinstance(element, PictureItem):
-            picture_counter += 1
-            element_image_filename = (
-                output_dir / f"{doc_filename}-picture-{picture_counter}.png"
-            )
-            with element_image_filename.open("wb") as fp:
-                element.get_image(conv_res.document).save(fp, "PNG")
-
-    # Save markdown with embedded pictures
-    md_filename = output_dir / f"{doc_filename}-with-images.md"
-    conv_res.document.save_as_markdown(md_filename, image_mode=ImageRefMode.EMBEDDED)
 
     # Save markdown with externally referenced pictures
     md_filename = output_dir / f"{doc_filename}-with-image-refs.md"
-    conv_res.document.save_as_markdown(md_filename, image_mode=ImageRefMode.REFERENCED)
+    conv_res.document.save_as_markdown(md_filename, 
+                                       image_mode=ImageRefMode.REFERENCED)
 
-    # Save HTML with externally referenced pictures
-    html_filename = output_dir / f"{doc_filename}-with-image-refs.html"
-    conv_res.document.save_as_html(html_filename, image_mode=ImageRefMode.REFERENCED)
 
     end_time = time.time() - start_time
 

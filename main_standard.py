@@ -15,7 +15,7 @@ IMAGE_RESOLUTION_SCALE = 2.0
 def main():
     logging.basicConfig(level=logging.INFO)
 
-    input_doc_path = Path("./test/docling.pdf")
+    input_doc_path = Path("./test4/Cusor0.5.0.pdf")
     output_dir = Path("output")
 
     # Important: For operating with page images, we must keep them, otherwise the DocumentConverter
