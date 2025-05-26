@@ -341,7 +341,7 @@ def main():
     doc_dst = "./output/results/2025-05-20.md"
     doc_alignment="Left"
     doc_width="700"
-    show_description = False
+    show_description = True
 
     config = ConfigManager(doc_source, doc_dst, doc_alignment, doc_width, show_description)
     
